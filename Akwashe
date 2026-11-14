@@ -1,0 +1,2197 @@
+import logging
+import re
+import json
+import os
+import datetime
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ContextTypes, filters
+)
+
+TOKEN = "8902459540:AAGYYYfZGepLvEmQZGYqu4wIChbrKECeaLU"
+SUPER_ADMIN_ID = 7489517144
+CHANNEL_URL = "https://t.me/Akuasshi"
+SUPPORT_USER = "Ghanem5210"
+DB_FILE = "bot_database.json"
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+
+admins = [SUPER_ADMIN_ID]
+settings = {
+    "dollar_rate": 13500,
+    "bonus_syriatel_mtn": 0.05,
+    "bonus_sham": 0.07,
+    "welcome_bonus_enabled": True,
+    "welcome_bonus_rate": 0.20,
+    "cashback_enabled": True,
+    "cashback_min_deposit": 500,
+    "cashback_rate": 0.10,
+    "syriatel_numbers": ["10229461"],
+    "mtn_numbers": ["10229461"],
+    "sham_accounts": ["64c303393b621cd4071f0677d69905cc"],
+    "gift_codes": {},
+    "luck_endings": ["11", "22", "33"],
+    "min_withdraw": {
+        "cash": 250,
+        "sham": 4000,
+        "haram": 4000,
+        "fouad": 4000
+    },
+    "maintenance_mode": False,
+    "offers_text": (
+        "⭐️ العروض الحالية في البوت:\n"
+        "⭐️ الرصيد الإضافي (البونص):\n"
+        "⭐️ سيريتيل كاش: {syr_bonus}%\n"
+        "⭐️ كاش: {syr_bonus}%\n"
+        "⭐️ شام كاش: {sham_bonus}%\n"
+        "⭐️ البونص الترحيبي لأول شحن: {welcome_bonus}%\n"
+        "⭐️ نسبة الإحالات: 5%\n"
+        "⭐️ الدولار = {dollar_rate} NSP\n"
+        "⭐️ حظك والكاش"
+    ),
+    "loyalty_tiers": [
+        {"points": 3000, "name": "رصيد مجاني 50$", "val": 0, "desc": "50$"},
+        {"points": 1600, "name": "رصيد مجاني 20$", "val": 0, "desc": "20$"},
+        {"points": 1200, "name": "تعويض 5%", "val": 0, "desc": "تعويض 5%"},
+        {"points": 1000, "name": "رصيد مجاني 10$", "val": 0, "desc": "10$"},
+        {"points": 600, "name": "رصيد مجاني 5$", "val": 0, "desc": "5$"},
+        {"points": 200, "name": "250", "val": 250, "desc": "250"}
+    ],
+    "loyalty_info_text": (
+        "⭐️ يحق للمستخدم استبدال نقاط الولاء مرة كل 10 ايام\n"
+        "⭐️ يتم تصفير نقاط الولاء مع بداية كل شهر\n"
+        "⭐️ قائمة جوائز الولاء المتاحة:\n"
+        "⭐️ الجائزة: 250\n"
+        "🔷 النقاط المطلوبة: 200 نقطة\n"
+        "⭐️ الجائزة: رصيد مجاني 5$\n"
+        "🔷 النقاط المطلوبة: 600 نقطة\n"
+        "⭐️ الجائزة: رصيد مجاني 10$\n"
+        "🔷 النقاط المطلوبة: 1000 نقطة\n"
+        "⭐️ الجائزة: تعويض 5%\n"
+        "🔷 النقاط المطلوبة: 1200 نقطة\n"
+        "⭐️ الجائزة: رصيد مجاني 20$\n"
+        "🔷 النقاط المطلوبة: 1600 نقطة\n"
+        "⭐️ الجائزة: رصيد مجاني 50$\n"
+        "🔷 النقاط المطلوبة: 3000 نقطة ."
+    )
+}
+
+users = {}            
+pending_requests = {} 
+used_tx_ids = set()   
+deposit_history = {}  
+withdraw_history = {} 
+gifts_history = {}    
+
+user_counter = 0
+request_counter = 1000
+
+def save_data():
+    data = {
+        "admins": admins,
+        "settings": settings,
+        "users": users,
+        "pending_requests": pending_requests,
+        "used_tx_ids": list(used_tx_ids),
+        "deposit_history": deposit_history,
+        "withdraw_history": withdraw_history,
+        "gifts_history": gifts_history,
+        "user_counter": user_counter,
+        "request_counter": request_counter
+    }
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logging.error(f"Error saving DB: {e}")
+
+def load_data():
+    global admins, settings, users, pending_requests, used_tx_ids
+    global deposit_history, withdraw_history, gifts_history, user_counter, request_counter
+    
+    if os.path.exists(DB_FILE):
+        try:
+            with open(DB_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                admins = data.get("admins", [SUPER_ADMIN_ID])
+                loaded_settings = data.get("settings", {})
+                for k, v in loaded_settings.items():
+                    settings[k] = v
+                users = {int(k): v for k, v in data.get("users", {}).items()}
+                pending_requests = {int(k): v for k, v in data.get("pending_requests", {}).items()}
+                used_tx_ids = set(data.get("used_tx_ids", []))
+                deposit_history = {int(k): v for k, v in data.get("deposit_history", {}).items()}
+                withdraw_history = {int(k): v for k, v in data.get("withdraw_history", {}).items()}
+                gifts_history = {int(k): v for k, v in data.get("gifts_history", {}).items()}
+                user_counter = data.get("user_counter", 0)
+                request_counter = data.get("request_counter", 1000)
+            logging.info("DB loaded successfully.")
+        except Exception as e:
+            logging.error(f"Error reading DB: {e}")
+
+def get_main_keyboard(user_id):
+    keyboard = [
+        [InlineKeyboardButton("⚡ايشانسي ⚡", callback_data='btn_echancy')],
+        [
+            InlineKeyboardButton("📥 شحن رصيد بالبوت", callback_data='btn_deposit_bot'),
+            InlineKeyboardButton("📤 سحب رصيد من البوت", callback_data='btn_withdraw_bot')
+        ],
+        [InlineKeyboardButton("💵 رصيد البوت", callback_data='btn_balance')],
+        [
+            InlineKeyboardButton("👥 نظام الاحالات", callback_data='btn_referrals'),
+            InlineKeyboardButton("🎁 كود الهدايا", callback_data='btn_gift_code')
+        ],
+        [
+            InlineKeyboardButton("🔄 السجل", callback_data='btn_history'),
+            InlineKeyboardButton("🔷 نقاط الولاء", callback_data='btn_loyalty')
+        ],
+        [
+            InlineKeyboardButton("🎡 عجلة الحظ", callback_data='wheel_menu'),
+            InlineKeyboardButton("🎉 العروض", callback_data='btn_offers')
+        ],
+        [
+            InlineKeyboardButton("📬 التواصل مع الدعم", url=f'https://t.me/{SUPPORT_USER}'),
+            InlineKeyboardButton("⚡ موقع ايشانسي", url='https://ichancy300.com/')
+        ],
+        [InlineKeyboardButton("🚧 الشروط والأحكام", callback_data='btn_terms')]
+    ]
+    if user_id in admins:
+        keyboard.append([InlineKeyboardButton("⚙️ لوحة إدارة الادمن", callback_data='btn_admin_panel')])
+        
+    return InlineKeyboardMarkup(keyboard)
+
+async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    user = update.effective_user
+    if not user:
+        return False
+    if settings.get("maintenance_mode", False) and user.id not in admins:
+        msg = (
+            "البوت يخضع الصيانة🔧 سيتم العودة للعمل قريبا نعتذر عن اجراء أي عمليات داخل البوت وجميع العمليات القائمة ستتم محفوظة حتى تنتهي الصيانة .\n"
+            "شكرا لتفهمكم🙏🙏"
+        )
+        if update.callback_query:
+            await update.callback_query.answer()
+            try:
+                await update.callback_query.message.delete()
+            except Exception:
+                pass
+            await update.callback_query.message.reply_text(msg)
+        elif update.message:
+            await update.message.reply_text(msg)
+        return True
+    return False
+
+async def main_menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    context.user_data.clear()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("⭐️ أهلاً بك ياملك !", reply_markup=get_main_keyboard(user_id))
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    if await check_maintenance(update, context):
+        return
+        
+    user = update.effective_user
+    user_id = user.id
+    
+    ref_by = None
+    if context.args and len(context.args) > 0:
+        try:
+            possible_ref = int(context.args[0])
+            if possible_ref != user_id:
+                ref_by = possible_ref
+        except ValueError:
+            pass
+
+    if user_id not in users:
+        users[user_id] = {
+            "accepted_terms": False,
+            "balance": 0.0,
+            "loyalty_points": 0,
+            "today_deposit": 0,
+            "total_today_bot_deposit": 0,
+            "today_echancy_deposit": 0,
+            "last_deposit_date": "",
+            "first_deposit_done": False,
+            "last_spin": "",
+            "ech_user": None,
+            "ech_pass": None,
+            "referrals": [],
+            "referred_by": ref_by,
+            "last_loyalty_exchange": None,
+            "name": user.first_name
+        }
+        if ref_by and ref_by in users:
+            users[ref_by]["referrals"].append(user_id)
+        save_data()
+
+    if not users[user_id]["accepted_terms"]:
+        terms_text = (
+            "شروط وأحكام استخدام البوت 🎲\n"
+            "يجب قراءة القوانين بعناية لضمان استخدامك للبوت بشكل صحيح وفعال، ولتجنب تعرض حسابك للحظر أو خسارة أموالك.\n"
+            "🟦 أنت المسؤول الوحيد عن أموالك، دورنا يقتصر على الوساطة بينك وبين الموقع، مع ضمان إيداع وسحب أموالك بكفاءة وموثوقية.\n"
+            "🟦 لا يجوز للاعب إيداع وسحب الأرصدة بهدف التبديل بين وسائل الدفع تحتفظ إدارة البوت بالحق في سحب أي رصيد والاحتفاظ به إذا تم اكتشاف عملية تبديل أو أي انتهاك لقوانين البوت.\n"
+            "🟦 إنشاء أكثر من حساب يؤدي إلى حظر جميع الحسابات وتجميد الأرصدة الموجودة فيها، وذلك وفقاً لشروط وأحكام الموقع للحد من الأنشطة الاحتيالية، وامتثالاً لسياسة اللعب النظيف.\n"
+            "🟦 أي محاولات للغش أو إنشاء حسابات متعددة بغرض الاستفادة من رصيد الإحالة ستؤدي إلى تجميد حسابك فوراً وإزالة جميع الإحالات الخاصة بك.\n"
+            "🟥 يُعدّ انضمامك للقناة والاستمرار في استخدام البوت بمثابة الموافقة على هذه الشروط، وتحمل المسؤولية الكاملة عن أي انتهاك لها."
+        )
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("الموافقة والانضمام للقناة ✅", url=CHANNEL_URL)], [InlineKeyboardButton("تم الانضمام ✅", callback_data='accept_terms')]])
+        await update.message.reply_text(terms_text, reply_markup=kb)
+        return
+
+    await update.message.reply_text("⭐️ أهلاً بك ياملك !", reply_markup=get_main_keyboard(user_id))
+
+async def accept_terms_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    users[user_id]["accepted_terms"] = True
+    save_data()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("⭐️ أهلاً بك ياملك !", reply_markup=get_main_keyboard(user_id))
+
+async def wheel_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    int_uid = int(user_id)
+    
+    if int_uid not in users:
+        users[int_uid] = {
+            "balance": 0.0, 
+            "loyalty_points": 0, 
+            "today_deposit": 0, 
+            "total_today_bot_deposit": 0,
+            "today_echancy_deposit": 0,
+            "last_spin": "",
+            "accepted_terms": True
+        }
+        
+    today_str = datetime.date.today().isoformat()
+    if users[int_uid].get("last_deposit_date") != today_str:
+        users[int_uid]["total_today_bot_deposit"] = 0
+        users[int_uid]["today_deposit"] = 0
+        users[int_uid]["today_echancy_deposit"] = 0
+        users[int_uid]["last_deposit_date"] = today_str
+
+    today_dep = users[int_uid].get("total_today_bot_deposit", 0)
+    has_admin_bonus = users[int_uid].get("admin_extra_spin", False)
+    
+    can_spin = "1"
+    reason = "ok"
+    prize_amount = 0
+    
+    if users[int_uid].get("last_spin") == today_str and not has_admin_bonus:
+        can_spin = "0"
+        reason = "used"
+    elif today_dep < 100 and not has_admin_bonus:
+        can_spin = "0"
+        reason = "no_deposit"
+    else:
+        if has_admin_bonus:
+            prize_amount = users[int_uid].get("admin_bonus_amount", 50)
+            users[int_uid]["admin_extra_spin"] = False
+        else:
+            if 100 <= today_dep <= 499:
+                prize_amount = 10
+            elif 500 <= today_dep <= 999:
+                prize_amount = 20
+            elif 1000 <= today_dep <= 1499:
+                prize_amount = 50
+            elif today_dep >= 1500:
+                prize_amount = 100
+                
+        users[int_uid]["last_spin"] = today_str
+        if prize_amount > 0:
+            users[int_uid]["balance"] = users[int_uid].get("balance", 0.0) + prize_amount
+        save_data()
+
+    base_web_url = f"https://ghanem0938100288-eng.github.io/Ghanem100/?can_spin={can_spin}&reason={reason}&prize={prize_amount}"
+    
+    kb = [
+        [InlineKeyboardButton("فتح عجلة الحظ 🎡", web_app=WebAppInfo(url=base_web_url))],
+        [InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]
+    ]
+    
+    msg = (
+        "🎡 **عجلة الحظ التفاعلية**\n\n"
+        "اضغط على الزر أدناه لفتح العجلة وتدويرها للحصول على جوائزك الفورية! 🌟\n"
+        "*(ملاحظة: يتطلب فرصة واحدة يومياً شحن مبلغ لا يقل عن 100)*"
+    )
+    
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_message and update.effective_message.web_app_data:
+        data_json = update.effective_message.web_app_data.data
+        try:
+            data = json.loads(data_json)
+            if data.get("action") == "wheel_spun":
+                prize = data.get("prize", 0)
+                await update.message.reply_text(f"✅ تم تسجيل نتيجة عجلة الحظ بنجاح! الجائزة الممنوحة: {prize} NSP")
+        except Exception as e:
+            logging.error(f"Error parsing web app data: {e}")
+
+async def admin_grant_wheel_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    
+    context.user_data["waiting_for_grant_target"] = True
+    kb = [[InlineKeyboardButton("إلغاء", callback_data='btn_admin_panel')]]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(
+        "🎁 **منح فرصة عجلة الحظ لمستخدم**\n\nأرسل الآن (آيدي المستخدم) و(قيمة المبلغ/الجائزة) بهذا الشكل تماماً:\n`123456789 50`",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode='Markdown'
+    )
+
+async def process_admin_grant_wheel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in admins:
+        return
+    if not context.user_data.get("waiting_for_grant_target"):
+        return
+    
+    text = update.message.text.strip()
+    try:
+        parts = text.split()
+        target_id = int(parts[0])
+        bonus_val = float(parts[1])
+        
+        if target_id not in users:
+            users[target_id] = {"balance": 0.0, "loyalty_points": 0, "today_deposit": 0, "total_today_bot_deposit": 0, "today_echancy_deposit": 0, "icash_deposited_today": False}
+            
+        users[target_id]["admin_extra_spin"] = True
+        users[target_id]["admin_bonus_amount"] = bonus_val
+        save_data()
+        
+        context.user_data.pop("waiting_for_grant_target", None)
+        await update.message.reply_text(f"✅ تم منح المستخدم `{target_id}` فرصة عجلة الحظ بقيمة جائزة `{bonus_val}` بنجاح!")
+    except Exception:
+        await update.message.reply_text("❌ خطأ في الإدخال. يجب الإرسال هكذا: `ID المبلغ` مثل: `12345678 50`", parse_mode='Markdown')
+
+async def echancy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+
+    if not users[user_id].get("ech_user"):
+        text = "انشئ حسابك الخاص واحصل على بونص 20% عند أول عملية شحن 🤩🤩 وبونص دائم من 5% إلى 7% عند كل عملية شحن"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("انشاء حساب ⚡ايشانسي⚡", callback_data='ech_create')],
+            [InlineKeyboardButton("المعرف", callback_data='ech_id'), InlineKeyboardButton("رجوع", callback_data='main_menu')]
+        ])
+        await query.message.reply_text(text, reply_markup=kb)
+    else:
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("شحن الحساب", callback_data='ech_charge'), InlineKeyboardButton("سحب من الحساب", callback_data='ech_withdraw')],
+            [InlineKeyboardButton("المعرف", callback_data='ech_id'), InlineKeyboardButton("حسابي", callback_data='ech_my_account')],
+            [InlineKeyboardButton("انشاء حساب جديد", callback_data='ech_create')],
+            [InlineKeyboardButton("رجوع", callback_data='main_menu')]
+        ])
+        await query.message.reply_text("قسم ايشانسي ⚡\nاختر العملية التي تريد القيام بها:", reply_markup=kb)
+
+async def ech_id_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(f"معرفك هو `{user_id}`", parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_echancy')]]))
+
+async def ech_my_account_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    ech_user = users[user_id].get("ech_user", "لا يوجد")
+    ech_pass = users[user_id].get("ech_pass", "لا يوجد")
+    text = f"معلومات حساب ايشانسي الخاص بك:\n👤 اسم المستخدم: `{ech_user}`\n🔑 كلمة المرور: `{ech_pass}`"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_echancy')]]))
+
+async def ech_create_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    context.user_data["state"] = "WAIT_ECH_USER"
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_echancy')]])
+    await query.message.reply_text("ادخل اسم مستخدم لحسابك:", reply_markup=kb)
+
+async def ech_charge_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    context.user_data["state"] = "WAIT_ECH_CHARGE"
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    bal = users[user_id]["balance"]
+    text = f"-رصيدك بالبوت هو {bal}.\n- ادخل المبلغ المراد شحنه ."
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_echancy')]])
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def ech_withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    context.user_data["state"] = "WAIT_ECH_WITHDRAW"
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_echancy')]])
+    await query.message.reply_text("ادخل المبلغ المراد سحبه:", reply_markup=kb)
+
+async def deposit_bot_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    text = "أقل قيمة للشحن هي 50 وأي قيمة أقل منها:❗️ لا يمكن شحنها❗️ لايمكن استرجاعهااختر طريقة الدفع من القائمة: 👇"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("سيريتيل كاش 🛑", callback_data='dep_syriatel')],
+        [InlineKeyboardButton("كاش MTN 🟡", callback_data='dep_mtn')],
+        [InlineKeyboardButton("شام كاش 🟢", callback_data='dep_sham')],
+        [InlineKeyboardButton("رجوع", callback_data='main_menu')]
+    ])
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def dep_syriatel_mtn_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    method = "سيريتيل كاش" if query.data == 'dep_syriatel' else "كاش MTN"
+    context.user_data["dep_method"] = method
+    context.user_data["state"] = "WAIT_DEP_AMT"
+    
+    raw_nums = settings["syriatel_numbers"] if "سيريتيل" in method else settings["mtn_numbers"]
+    formatted_nums = "\n".join([f"`{num}`" for num in raw_nums])
+    
+    text = f"أرسل إلى أحد الأرقام التالية (اضغط على الرقم للنسخ):\n{formatted_nums}\n\nثم ادخل قيمة المبلغ المرسل  👇"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_deposit_bot')]])
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=kb)
+
+async def dep_sham_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    context.user_data["dep_method"] = "شام كاش"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🟢 ليرة سورية", callback_data='dep_sham_syp'), InlineKeyboardButton("🔴 دولار امريكي", callback_data='dep_sham_usd')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_deposit_bot')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("حدد نوع العملية المراد شحن رصيدك بها 👇", reply_markup=kb)
+
+async def dep_sham_currency_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    currency = "SYP" if query.data == 'dep_sham_syp' else "USD"
+    context.user_data["dep_method"] = f"شام كاش {currency}"
+    context.user_data["currency"] = currency
+    context.user_data["state"] = "WAIT_DEP_AMT"
+    acc = "\n".join([f"`{a}`" for a in settings["sham_accounts"]])
+    text = f"أرسل المبلغ المراد شحنه إلى الحساب الخاص بالبوت (اضغط على الحساب للنسخ):\n{acc}\n\nثم قم بإدخال قيمة المبلغ المرسل  👇"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='dep_sham')]])
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=kb)
+
+async def withdraw_bot_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    text = (
+        "اختر طريقة السحب التي ترغب من خلالها باستلام الأرباح: 👇\n\n"
+        "سيريتيل كاش 🛑\n"
+        "كاش MTN 🟡\n"
+        "شام كاش 🔵\n"
+        "الهرم 🟢\n"
+        "الفؤاد 🟠"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("سيريتيل كاش 🛑", callback_data='with_syriatel')],
+        [InlineKeyboardButton("كاش MTN 🟡", callback_data='with_mtn')],
+        [InlineKeyboardButton("شام كاش 🔵", callback_data='with_sham')],
+        [InlineKeyboardButton("الهرم 🟢", callback_data='with_haram')],
+        [InlineKeyboardButton("الفؤاد 🟠", callback_data='with_fouad')],
+        [InlineKeyboardButton("رجوع", callback_data='main_menu')]
+    ])
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def withdraw_method_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data == 'with_syriatel':
+        method = "سيريتيل"
+        min_amt = settings["min_withdraw"].get("cash", 250)
+    elif data == 'with_mtn':
+        method = "MTN"
+        min_amt = settings["min_withdraw"].get("cash", 250)
+    elif data == 'with_sham':
+        method = "شام كاش"
+        min_amt = settings["min_withdraw"].get("sham", 4000)
+    elif data == 'with_haram':
+        method = "الهرم"
+        min_amt = settings["min_withdraw"].get("haram", 4000)
+    else:
+        method = "الفؤاد"
+        min_amt = settings["min_withdraw"].get("fouad", 4000)
+        
+    context.user_data["with_method"] = method
+    context.user_data["min_amt"] = min_amt
+    context.user_data["state"] = "WAIT_WITH_PHONE"
+    text = (
+        f"💡 العملية: سحب رصيد من محفظتك في البوت\n"
+        f"💡 السحب سيتم عبر: {method}\n"
+        f"💡 الحد الأدنى للسحب: {min_amt}\n\n"
+        f"أولاً: أدخل رقم الهاتف الخاص بك لاستلام المبلغ 👇"
+    )
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_withdraw_bot')]])
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def balance_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    bal = users[user_id]["balance"]
+    points = users[user_id].get("loyalty_points", 0)
+    text = f"💵 رصيدك الحالي في البوت:\n⭐   {bal} NSP\n\n⭐️ نقاط الولاء: {points} نقطة"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='main_menu')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def referrals_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    bot_username = context.bot.username
+    ref_link = f"https://t.me/{bot_username}?start={user_id}"
+    text = (
+        "نظام العمولة 👥\n"
+        "- يتيح البوت للمستخدمين كسب نسبة ثابتة (5%) من كل عملية شحن يقوم بها الأشخاص الذين ينضمون من خلال رابط الإحالة الخاص بهم.\n"
+        "- يمكن للمستخدم سحب الأرباح بشكل فوري.\n"
+        "- يتم إعلام المستخدم بانضمام أي شخص عبر رابطه، ويتم إضافة الأرباح تلقائياً عندما يقوم الشخص المحال به بشحن حسابه.\n\n"
+        f"● رابط الإحالة الخاص بك (اضغط للنسخ):\n`{ref_link}`\n\n"
+        "● يمكنك الاستعلام عن مساهمتك في نظام العمولة:"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗳️ استعلام", callback_data='ref_query')],
+        [InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=kb)
+
+async def referrals_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    total_refs = len(users[user_id]["referrals"])
+    text = (
+        f"⚪️ عدد إحالاتك الكُلية: {total_refs}\n"
+        f"⚪️ عدد إحالاتك النشطة الكُلية: {min(total_refs, 3)}\n"
+        f"⚪️ عدد إحالاتك النشطة الشهرية: {min(total_refs, 1)}\n"
+        f"⚪️ عمليات الشحن الشهرية التي تمت عن طريق إحالاتك: 12\n"
+        f"⚪️ العمولة الشهرية: 72350.0\n\n"
+        f"🗓 السنة: 2026 الشهر: 9\n\n"
+        f"1️⃣ أول 10 أيام:\n- عدد الإحالات: 0\n- عدد الإحالات النشطة: 1\n- عدد عمليات الشحن: 11\n- مبالغ الإحالات: 65270.0\n\n"
+        f"2️⃣ ثاني 10 أيام:\n- عدد الإحالات: 0\n- عدد الإحالات النشطة: 1\n- عدد عمليات الشحن: 1\n- مبالغ الإحالات: 7080.0\n\n"
+        f"3️⃣ ثالث 10 أيام:\n- عدد الإحالات: 0\n- عدد الإحالات النشطة: 0\n- عدد عمليات الشحن: 0\n- مبالغ الإحالات: 0 NSP\n\n"
+        f"يجب أن يكون لديك 3 إحلات نشطة على الأقل ليتم صرف العمولة لك."
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_referrals')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def gift_code_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    context.user_data["state"] = "WAIT_GIFT_CODE"
+    query = update.callback_query
+    await query.answer()
+    text = (
+        "💡 يتم الحصول على كود الهدية من قبل الأدمن\n"
+        "💡 الأكواد تمنح من خلال مسابقات والجواز🎁\n\n"
+        "أدخل كود الهدية لشحن رصيدك بقيمته: 👇"
+    )
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='main_menu')]])
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def history_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    text = "🔁 سجل المستخدم في البوت"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("سجل الشحن 📥", callback_data='hist_deposit')],
+        [InlineKeyboardButton("سجل السحب 📤", callback_data='hist_withdraw')],
+        [InlineKeyboardButton("سجل الهدايا 🎁", callback_data='hist_gifts')],
+        [InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def history_deposit_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    deposits = deposit_history.get(user_id, [])
+    text = f"💡 لديك {len(deposits)} عملية شحن\n"
+    for idx, d in enumerate(deposits, 1):
+        text += f"----------------{idx}\nمبلغ الشحن: {d['amount']}\nالشحن عبر: {d['method']}\nالتاريخ: {d['date']}\n"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع ↪️", callback_data='btn_history')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def history_withdraw_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    withdraws = withdraw_history.get(user_id, [])
+    text = f"💡 لديك {len(withdraws)} عملية سحب\n"
+    for idx, w in enumerate(withdraws, 1):
+        text += f"----------------{idx}\nصافي مبلغ السحب: {w.get('net_amount', w['amount'])}\nالسحب عبر: {w['method']}\nالتاريخ: {w['date']}\n"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع ↪️", callback_data='btn_history')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def history_gifts_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    gifts = gifts_history.get(user_id, [])
+    text = f"💡 لديك {len(gifts)} هدية\n"
+    for idx, g in enumerate(gifts, 1):
+        text += f"----------------{idx}\nمبلغ الهدية: {g['amount']}\nالتاريخ: {g['date']}\n"
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع ↪️", callback_data='btn_history')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def loyalty_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    points = users[user_id].get("loyalty_points", 0)
+    text = f"رصيد نقاط الولاء 🔷 : {points} نقطة"
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔷استبدال نقاط الولاء 🔷", callback_data='loyalty_exchange_info')],
+        [InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def loyalty_exchange_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    query = update.callback_query
+    await query.answer()
+    text = settings.get("loyalty_info_text", "")
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("استبدال النقاط", callback_data='loyalty_do_exchange')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_loyalty')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+def get_current_third_of_month():
+    now = datetime.datetime.now()
+    day = now.day
+    if day <= 10:
+        return 1
+    elif day <= 20:
+        return 2
+    else:
+        return 3
+
+async def loyalty_do_exchange(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    global request_counter
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    last_ex = users[user_id].get("last_loyalty_exchange")
+    current_third = get_current_third_of_month()
+    now_str = f"{datetime.datetime.now().strftime('%Y-%m')}-3rd-{current_third}"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    if last_ex == now_str:
+        await query.message.reply_text("لا يمكن استبدال النقاط خلال الثلث الحالي من الشهر", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_loyalty')]]))
+        return
+    points = users[user_id].get("loyalty_points", 0)
+    if points < 200:
+        await query.message.reply_text("عدد نقاط غير كافي", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_loyalty')]]))
+        return
+    tiers = settings.get("loyalty_tiers", [])
+    selected_tier = None
+    for tier in tiers:
+        if points >= tier["points"]:
+            selected_tier = tier
+            break
+    if not selected_tier:
+        await query.message.reply_text("عدد نقاط غير كافي", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_loyalty')]]))
+        return
+    req_pts = selected_tier["points"]
+    desc = selected_tier["desc"]
+    users[user_id]["last_loyalty_exchange"] = now_str
+    request_counter += 1
+    req_id = request_counter
+    pending_requests[req_id] = {
+        "type": "loyalty_exchange",
+        "user_id": user_id,
+        "points": req_pts,
+        "reward_desc": desc
+    }
+    save_data()
+    await query.message.reply_text(f"تهانينا سيتم استبدال نقاطك بهدية ({desc})\nتم رفع الطلب للإدارة سيتم اعلامك حين الموافقة وإضافة الهدية إلى رصيدك بالبوت .")
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+        [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+    ])
+    await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"🎁 **طلب تبديل نقاط ولاء #{req_id}**\n👤 المعرف: `{user_id}`\n🔷 النقاط المخصومة: {req_pts}\n🎁 الجائزة: {desc}", reply_markup=admin_kb, parse_mode='Markdown')
+
+async def offers_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    rate = settings.get("dollar_rate", 13500)
+    syr_bonus = int(settings['bonus_syriatel_mtn']*100)
+    sham_bonus = int(settings['bonus_sham']*100)
+    welcome_bonus = int(settings.get('welcome_bonus_rate', 0.20)*100)
+    template = settings.get("offers_text", "")
+    text = template.format(syr_bonus=syr_bonus, sham_bonus=sham_bonus, welcome_bonus=welcome_bonus, dollar_rate=rate)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=kb)
+
+async def terms_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    context.user_data.clear()
+    query = update.callback_query
+    await query.answer()
+    terms_text = (
+        "شروط وأحكام استخدام البوت 🎲\n"
+        "يجب قراءة القوانين بعناية لضمان استخدامك للبوت بشكل صحيح وفعال، ولتجنب تعرض حسابك للحظر أو خسارة أموالك.\n"
+        "🟦 أنت المسؤول الوحيد عن أموالك، دورنا يقتصر على الوساطة بينك وبين الموقع، مع ضمان إيداع وسحب أموالك بكفاءة وموثوقية.\n"
+        "🟦 لا يجوز للاعب إيداع وسحب الأرصدة بهدف التبديل بين وسائل الدفع تحتفظ إدارة البوت الحق في سحب أي رصيد والاحتفاظ به إذا تم اكتشاف عملية تبديل أو أي انتهاك لقوانين البوت.\n"
+        "🟦 إنشاء أكثر من حساب يؤدي إلى حظر جميع الحسابات وتجميد الأرصدة الموجودة فيها، وذلك وفقاً لشروط وأحكام الموقع للحد من الأنشطة الاحتيالية، وامتثالاً لسياسة اللعب النظيف.\n"
+        "🟦 أي محاولات للغش أو إنشاء حسابات متعددة بغرض الاستفادة من رصيد الإحالة ستؤدي إلى تجميد حسابك فوراً وإزالة جميع الإحالات الخاصة بك."
+    )
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(terms_text, reply_markup=kb)
+
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if user_id not in admins:
+        return
+    context.user_data.clear()
+    kb = [
+        [InlineKeyboardButton("الطلبات المعلقة بإنشاء الحسابات", callback_data='adm_req_ech_create')],
+        [InlineKeyboardButton("الطلبات المعلقة لرصيد البوت الشحن والسحب", callback_data='adm_req_bot_money')],
+        [InlineKeyboardButton("الطلبات المعلقة لتبديل نقاط الولاء", callback_data='adm_req_loyalty')],
+        [InlineKeyboardButton("الطلبات المعلقة لحساب ايشانسي الشحن والسحب", callback_data='adm_req_ech_money')],
+    ]
+    if user_id == SUPER_ADMIN_ID:
+        kb.append([InlineKeyboardButton("إضافة وازالة ادمن للبوت", callback_data='adm_manage_admin')])
+        
+    kb.extend([
+        [InlineKeyboardButton("🎁 منح فرصة عجلة الحظ", callback_data='admin_grant_wheel')],
+        [InlineKeyboardButton("💵 إعدادات الكاش باك (Cashback)", callback_data='adm_cashback_menu')],
+        [InlineKeyboardButton("🎉 إعدادات البونص الترحيبي", callback_data='adm_welcome_bonus_menu')],
+        [InlineKeyboardButton("صيانة البوت 🛠️", callback_data='adm_maintenance_menu')],
+        [InlineKeyboardButton("إرسال رسالة للمستخدمين ✉️", callback_data='adm_broadcast_menu')],
+        [InlineKeyboardButton("تعديل عروض البوت 📝", callback_data='adm_edit_offers')],
+        [InlineKeyboardButton("تعديل جوائز نقاط الولاء 🎁", callback_data='adm_edit_loyalty')],
+        [InlineKeyboardButton("منح كود هدية", callback_data='adm_give_gift')],
+        [InlineKeyboardButton("تعديل اكواد الشحن", callback_data='adm_edit_codes')],
+        [InlineKeyboardButton("تعديل أرقام حظك والكاش", callback_data='adm_edit_luck')],
+        [InlineKeyboardButton("تعديل سعر الدولار", callback_data='adm_edit_rate')],
+        [InlineKeyboardButton("حسابات المستخدمين", callback_data='adm_users_list')],
+        [InlineKeyboardButton("عمليات الشحن والسحب", callback_data='adm_transactions')],
+        [InlineKeyboardButton("تعديل بونص الشحن", callback_data='adm_edit_bonus')],
+        [InlineKeyboardButton("تعديل الحد الادني للسحب", callback_data='adm_edit_min_with')],
+        [InlineKeyboardButton("رجوع ↪️", callback_data='main_menu')]
+    ])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("⚙️ لوحة إدارة الأدمن:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_cashback_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    cb_status = "🟢 مفعّلة" if settings.get("cashback_enabled", True) else "🔴 متوقفة"
+    min_dep = settings.get("cashback_min_deposit", 500)
+    cb_rate = int(settings.get("cashback_rate", 0.10) * 100)
+    
+    kb = [
+        [InlineKeyboardButton("تفعيل ✅", callback_data='cb_on'), InlineKeyboardButton("إيقاف 🛑", callback_data='cb_off')],
+        [InlineKeyboardButton("تعديل الحد الأدنى والنسبة ⚙️", callback_data='cb_edit_vals')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    text = (
+        f"💵 **إدارة ميزة الكاش باك (Cashback)**\n\n"
+        f"الحالة: {cb_status}\n"
+        f"الحد الأدنى للشحن اليومي لإيشانسي: `{min_dep}`\n"
+        f"نسبة الاسترداد: `{cb_rate}%`"
+    )
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def adm_cashback_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    data = query.data
+    if data == 'cb_on':
+        settings["cashback_enabled"] = True
+        save_data()
+        await query.message.reply_text("✅ تم تفعيل ميزة الكاش باك بنجاح.")
+    elif data == 'cb_off':
+        settings["cashback_enabled"] = False
+        save_data()
+        await query.message.reply_text("🛑 تم إيقاف ميزة الكاش باك بنجاح.")
+    elif data == 'cb_edit_vals':
+        context.user_data["state"] = "WAIT_ADMIN_CB_VALS"
+        await query.message.reply_text("أرسل القيمة الجديدة بهذا الشكل (الحد_الأدنى النسبة_المئوية) مثال:\n`500 10`", parse_mode='Markdown')
+        return
+    await adm_cashback_menu(update, context)
+
+async def adm_welcome_bonus_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    wb_status = "🟢 مفعّل" if settings.get("welcome_bonus_enabled", True) else "🔴 متوقف"
+    wb_rate = int(settings.get("welcome_bonus_rate", 0.20) * 100)
+    
+    kb = [
+        [InlineKeyboardButton("تفعيل ✅", callback_data='wb_on'), InlineKeyboardButton("إيقاف 🛑", callback_data='wb_off')],
+        [InlineKeyboardButton("تعديل نسبة البونص ⚙️", callback_data='wb_edit_val')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    text = (
+        f"🎉 **إدارة البونص الترحيبي (أول عملية شحن)**\n\n"
+        f"الحالة: {wb_status}\n"
+        f"نسبة البونص: `{wb_rate}%`"
+    )
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def adm_welcome_bonus_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    data = query.data
+    if data == 'wb_on':
+        settings["welcome_bonus_enabled"] = True
+        save_data()
+        await query.message.reply_text("✅ تم تفعيل البونص الترحيبي بنجاح.")
+    elif data == 'wb_off':
+        settings["welcome_bonus_enabled"] = False
+        save_data()
+        await query.message.reply_text("🛑 تم إيقاف البونص الترحيبي بنجاح.")
+    elif data == 'wb_edit_val':
+        context.user_data["state"] = "WAIT_ADMIN_WB_VAL"
+        await query.message.reply_text("أرسل نسبة البونص الترحيبي الجديدة برقم فقط (مثال: `20` تعني 20%):", parse_mode='Markdown')
+        return
+    await adm_welcome_bonus_menu(update, context)
+
+async def adm_req_ech_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    ech_requests = {k: v for k, v in pending_requests.items() if v["type"] == "create_echancy"}
+    if not ech_requests:
+        await query.message.reply_text("لا توجد طلبات معلقة بإنشاء الحسابات.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+        return
+    for req_id, req in ech_requests.items():
+        text = f"📌 طلب إنشاء حساب #{req_id}\nمعرف: `{req['user_id']}`\nاسم المستخدم: `{req['ech_user']}`\nكلمة المرور: `{req['ech_pass']}`"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_ech_create_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{req['user_id']}")]
+        ])
+        await context.bot.send_message(chat_id=query.from_user.id, text=text, reply_markup=kb, parse_mode='Markdown')
+    await query.message.reply_text("تم إرسال قائمة الطلبات المعلقة بإنشاء الحسابات.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+
+async def adm_req_bot_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    reqs = {k: v for k, v in pending_requests.items() if v["type"] in ["deposit_bot", "withdraw_bot"]}
+    if not reqs:
+        await query.message.reply_text("لا توجد طلبات معلقة لرصيد البوت.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+        return
+    for req_id, req in reqs.items():
+        if req["type"] == "deposit_bot":
+            text = f"📥 طلب إيداع #{req_id}\nمعرف: `{req['user_id']}`\nالطريقة: {req['method']}\nالمبلغ: {req['amount']}\nرقم العملية: `{req['tx_id']}`"
+        else:
+            text = f"📤 طلب سحب #{req_id}\nمعرف: `{req['user_id']}`\nالطريقة: {req['method']}\nالمبلغ: {req['amount']}\nالوجهة: `{req.get('phone') or req.get('sham_acc')}`"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{req['user_id']}")]
+        ])
+        await context.bot.send_message(chat_id=query.from_user.id, text=text, reply_markup=kb, parse_mode='Markdown')
+    await query.message.reply_text("تم إرسال جميع الطلبات المعلقة لرصيد البوت.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+
+async def adm_req_loyalty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    reqs = {k: v for k, v in pending_requests.items() if v["type"] == "loyalty_exchange"}
+    if not reqs:
+        await query.message.reply_text("لا توجد طلبات معلقة لتبديل نقاط الولاء.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+        return
+    for req_id, req in reqs.items():
+        text = f"🎁 طلب تبديل نقاط ولاء #{req_id}\nمعرف: `{req['user_id']}`\nالنقاط المطلوبة: {req['points']}\nالجائزة: {req.get('reward_desc', '250')}"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=query.from_user.id, text=text, reply_markup=kb, parse_mode='Markdown')
+    await query.message.reply_text("تم إرسال طلبات نقاط الولاء المعلقة.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+
+async def adm_req_ech_money(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    reqs = {k: v for k, v in pending_requests.items() if v["type"] in ["charge_echancy", "withdraw_echancy"]}
+    if not reqs:
+        await query.message.reply_text("لا توجد طلبات معلقة لإيشانسي.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+        return
+    for req_id, req in reqs.items():
+        text = f"⚡ طلب ايشانسي #{req_id}\nنوع الطلب: {req['type']}\nمعرف: `{req['user_id']}`\nالمبلغ: {req['amount']}"
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=query.from_user.id, text=text, reply_markup=kb, parse_mode='Markdown')
+    await query.message.reply_text("تم إرسال طلبات إيشانسي المعلقة.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]]))
+
+async def adm_manage_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id != SUPER_ADMIN_ID:
+        return
+    context.user_data["state"] = "WAIT_ADMIN_MANAGE_ID"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text("أدخل معرف المستخدم لإضافته أو إزالته من قائمة الأدمنية:", reply_markup=kb)
+
+async def adm_maintenance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    status = settings.get("maintenance_mode", False)
+    status_text = "🟢 البوت يعمل حالياً" if not status else "🔴 البوت في حالة صيانة حالياً"
+    kb = [
+        [InlineKeyboardButton("تعطيل البوت 🛑", callback_data='adm_maint_off'), InlineKeyboardButton("تشغيل البوت ✅", callback_data='adm_maint_on')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(f"🛠️ **قسم صيانة البوت**\nالحالة الحالية: {status_text}\n\nاختر الإجراء المطلوب:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def adm_maint_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    if user_id not in admins:
+        return
+    data = query.data
+    if data == 'adm_maint_off':
+        settings["maintenance_mode"] = True
+        save_data()
+        msg = "البوت يخضع الصيانة🔧 سيتم العودة للعمل قريبا."
+        for uid in users.keys():
+            try:
+                await context.bot.send_message(chat_id=uid, text=msg)
+            except Exception:
+                pass
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text("✅ تم تعطيل البوت.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_maintenance_menu')]]))
+    else:
+        settings["maintenance_mode"] = False
+        save_data()
+        msg = "عاد البوت للعمل من جديد 🎉🎉"
+        for uid in users.keys():
+            try:
+                await context.bot.send_message(chat_id=uid, text=msg)
+            except Exception:
+                pass
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        await query.message.reply_text("✅ تم تشغيل البوت.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_maintenance_menu')]]))
+
+async def adm_broadcast_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    kb = [
+        [InlineKeyboardButton("مستخدم محدد 🟢", callback_data='broadcast_single')],
+        [InlineKeyboardButton("جميع المستخدمين 🟢", callback_data='broadcast_all')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("✉️ **إرسال رسالة للمستخدمين**\nاختر نوع الإرسال:", reply_markup=InlineKeyboardMarkup(kb), parse_mode='Markdown')
+
+async def broadcast_single_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    kb = []
+    for uid, udata in users.items():
+        name = udata.get('name', 'بدون اسم')
+        kb.append([InlineKeyboardButton(f"{name} ({uid})", url=f"tg://user?id={uid}")])
+    kb.append([InlineKeyboardButton("رجوع", callback_data='adm_broadcast_menu')])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("👤 اختر المستخدم للتواصل معه:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def broadcast_all_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    context.user_data["state"] = "WAIT_ADMIN_BROADCAST_MSG"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_broadcast_menu')]])
+    await query.message.reply_text("أرسل الآن الرسالة (نص، صورة، فيديو، أو ملف) ليتم بثها لجميع المستخدمين:", reply_markup=kb)
+
+async def adm_edit_offers_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    context.user_data["state"] = "WAIT_ADMIN_OFFERS_TEXT"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text("أدخل نص رسالة العروض الجديد:", reply_markup=kb)
+
+async def adm_edit_loyalty_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    context.user_data["state"] = "WAIT_ADMIN_LOYALTY_TEXT"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text("أدخل نص رسالة استبدال نقاط الولاء الجديد:", reply_markup=kb)
+
+async def adm_give_gift_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    context.user_data["state"] = "WAIT_ADMIN_GIVE_GIFT_UID"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text("ادخل معرف المستخدم الذي سيتم منحه كود الهدية:", reply_markup=kb)
+
+async def adm_edit_codes_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = [
+        [InlineKeyboardButton("سيريتيل", callback_data='code_syr'), InlineKeyboardButton("MTN", callback_data='code_mtn'), InlineKeyboardButton("شام كاش", callback_data='code_sham')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("اختر طريقة الدفع لتعديل أرقامها أو حساباتها:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_add_code_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    context.user_data["code_type"] = "syr" if data == 'code_syr' else ("mtn" if data == 'code_mtn' else "sham")
+    kb = [
+        [InlineKeyboardButton("إضافة كود/رقم", callback_data='do_add_code'), InlineKeyboardButton("إزالة كود/رقم", callback_data='do_rem_code')],
+        [InlineKeyboardButton("رجوع", callback_data='adm_edit_codes')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("اختر الإجراء المطلوب:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def do_add_code_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["state"] = "WAIT_ADMIN_ADD_CODE_NUM"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_edit_codes')]])
+    await query.message.reply_text("أدخل الرقم أو الحساب الجديد ليتم إضافته:", reply_markup=kb)
+
+async def do_rem_code_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["state"] = "WAIT_ADMIN_REM_CODE_NUM"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_edit_codes')]])
+    await query.message.reply_text("أدخل الرقم أو الحساب المراد إزالته:", reply_markup=kb)
+
+async def adm_edit_luck_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.from_user.id not in admins:
+        return
+    current_luck = ", ".join(settings.get("luck_endings", ["11", "22", "33"]))
+    context.user_data["state"] = "WAIT_ADMIN_LUCK_VAL"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text(f"أرقام حظك والكاش الحالية هي: {current_luck}\n\nأدخل النهايات الجديدة مفصولة بفواصل (مثال: 11,22,33):", reply_markup=kb)
+
+async def adm_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    text = "👥 قائمة المستخدمين المسجلين في البوت:\n"
+    kb = []
+    for idx, (uid, udata) in enumerate(users.items(), 1):
+        text += f"{idx}- الاسم: {udata.get('name', 'بدون')} | المعرف: `{uid}` | الرصيد: {udata['balance']}\n"
+        kb.append([
+            InlineKeyboardButton(f"شحن {udata.get('name', uid)}", callback_data=f"adm_user_dep_{uid}"),
+            InlineKeyboardButton(f"سحب {udata.get('name', uid)}", callback_data=f"adm_user_with_{uid}")
+        ])
+    kb.append([InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')])
+    if len(text) > 4000:
+        text = text[:4000] + "\n... (قائمة طويلة)"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_user_balance_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    parts = data.split("_")
+    action = parts[2]
+    uid = int(parts[3])
+    context.user_data["target_user_id"] = uid
+    context.user_data["target_action"] = action
+    context.user_data["state"] = "WAIT_ADMIN_USER_BAL_AMT"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_users_list')]])
+    await query.message.reply_text(f"أدخل المبلغ المراد {'شحنه لـ' if action == 'dep' else 'خصمه/سحبه من'} المستخدم `{uid}`:", parse_mode='Markdown', reply_markup=kb)
+
+async def adm_transactions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = [
+        [InlineKeyboardButton("عمليات الشحن", callback_data='adm_trans_dep'), InlineKeyboardButton("عمليات السحب", callback_data='adm_trans_with')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("اختر نوع العمليات لعرضها خلال الشهر:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_transactions_show(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    is_dep = (data == 'adm_trans_dep')
+    text = "📥 تقرير عمليات الشحن:\n" if is_dep else "📤 تقرير عمليات السحب:\n"
+    source_dict = deposit_history if is_dep else withdraw_history
+    count = 0
+    for uid, history_list in source_dict.items():
+        for item in history_list:
+            count += 1
+            if is_dep:
+                text += f"{count}- معرف: `{uid}` | المبلغ: {item['amount']} | الطريقة: {item['method']}\n"
+            else:
+                text += f"{count}- معرف: `{uid}` | المبلغ: {item.get('net_amount', item['amount'])} | الطريقة: {item['method']}\n"
+    if count == 0:
+        text += "لا توجد عمليات مسجلة."
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_transactions')]])
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text(text, parse_mode='Markdown', reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_edit_bonus_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = [
+        [InlineKeyboardButton("سيريتيل و mtn", callback_data='bonus_syr_mtn'), InlineKeyboardButton("شام كاش", callback_data='bonus_sham')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("اختر الوسيلة لتعديل نسبة البونص الخاصة بها:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_bonus_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    target_type = "سيريتيل و MTN" if query.data == 'bonus_syr_mtn' else "شام كاش"
+    context.user_data["bonus_target"] = "syr_mtn" if query.data == 'bonus_syr_mtn' else "sham"
+    context.user_data["bonus_target_name"] = target_type
+    context.user_data["state"] = "WAIT_ADMIN_BONUS_VAL"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_edit_bonus')]])
+    await query.message.reply_text("أدخل نسبة البونص الجديدة (مثال: ادخل 15 تعني 15%):", reply_markup=kb)
+
+async def adm_edit_min_with_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    kb = [
+        [InlineKeyboardButton("كاش", callback_data='min_cash'), InlineKeyboardButton("شام كاش", callback_data='min_sham')],
+        [InlineKeyboardButton("هرم", callback_data='min_haram'), InlineKeyboardButton("فؤاد", callback_data='min_fouad')],
+        [InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]
+    ]
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    await query.message.reply_text("اختر الطريقة لتعديل الحد الأدنى للسحب:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def adm_min_with_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    context.user_data["min_with_target"] = data.replace('min_', '')
+    context.user_data["state"] = "WAIT_ADMIN_MIN_WITH_VAL"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='adm_edit_min_with')]])
+    await query.message.reply_text("أدخل الحد الأدنى الجديد للسحب:", reply_markup=kb)
+
+async def adm_edit_rate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    current_rate = settings.get("dollar_rate", 13500)
+    context.user_data["state"] = "WAIT_ADMIN_RATE"
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_admin_panel')]])
+    await query.message.reply_text(f"سعر الدولار الحالي هو: {current_rate}\nأرسل السعر الجديد بالرقم فقط:", reply_markup=kb)
+
+async def global_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global user_counter, request_counter
+    user_id = update.effective_user.id
+    state = context.user_data.get("state")
+    
+    if context.user_data.get("waiting_for_grant_target"):
+        await process_admin_grant_wheel(update, context)
+        return
+
+    if state == "WAIT_ADMIN_CB_VALS":
+        text = update.message.text.strip()
+        try:
+            parts = text.split()
+            min_dep = float(parts[0])
+            rate_val = float(parts[1]) / 100.0
+            settings["cashback_min_deposit"] = min_dep
+            settings["cashback_rate"] = rate_val
+            save_data()
+            await update.message.reply_text(f"✅ تم تحديث إعدادات الكاش باك بنجاح:\nالحد الأدنى اليومي: {min_dep}\nالنسبة: {int(rate_val*100)}%")
+        except Exception:
+            await update.message.reply_text("❌ خطأ في الإدخال. يرجى الإرسال هكذا: `500 10`", parse_mode='Markdown')
+        context.user_data.clear()
+        return
+
+    if state == "WAIT_ADMIN_WB_VAL":
+        text = update.message.text.strip()
+        try:
+            rate_val = float(text) / 100.0
+            settings["welcome_bonus_rate"] = rate_val
+            save_data()
+            await update.message.reply_text(f"✅ تم تحديث نسبة البونص الترحيبي بنجاح إلى: {text}%")
+        except Exception:
+            await update.message.reply_text("❌ يرجى إدخال رقم صحيح (مثال: `20`)", parse_mode='Markdown')
+        context.user_data.clear()
+        return
+
+    if context.user_data.get("admin_replying_to_user"):
+        target_uid = context.user_data.pop("admin_replying_to_user")
+        reply_text = update.message.text.strip()
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=f"📬 **رد من إدارة البوت:**\n\n{reply_text}"
+            )
+            await update.message.reply_text("✅ تم إرسال الرد للمستخدم بنجاح.")
+        except Exception as e:
+            await update.message.reply_text(f"❌ لم يتم إرسال الرد، حدث خطأ: {e}")
+        context.user_data.clear()
+        return
+        
+    if not state:
+        return 
+        
+    if state == "WAIT_ADMIN_BROADCAST_MSG":
+        success_count = 0
+        for uid in users.keys():
+            try:
+                await context.bot.copy_message(
+                    chat_id=uid,
+                    from_chat_id=update.effective_chat.id,
+                    message_id=update.message.message_id
+                )
+                success_count += 1
+            except Exception:
+                pass
+        await update.message.reply_text(f"✅ تم إرسال الإذاعة بنجاح إلى ({success_count}) مستخدم.")
+        context.user_data.clear()
+        return
+
+    text = update.message.text.strip() if update.message.text else ""
+
+    if state == "WAIT_ADMIN_MANAGE_ID":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل معرف صحيح باللغة الانكليزية:")
+            return
+        uid = int(text)
+        if uid == SUPER_ADMIN_ID:
+            await update.message.reply_text("لا يمكن تعديل حالة الأدمن الأساسي.")
+            context.user_data.clear()
+            return
+        if uid in admins:
+            admins.remove(uid)
+            save_data()
+            await update.message.reply_text(f"✅ تم إزالة المستخدم `{uid}` من الأدمنية بنجاح.")
+        else:
+            admins.append(uid)
+            save_data()
+            await update.message.reply_text(f"✅ تم إضافة المستخدم `{uid}` إلى الأدمنية بنجاح.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_ADD_CODE_NUM":
+        ctype = context.user_data.get("code_type")
+        if ctype == "syr":
+            settings["syriatel_numbers"].append(text)
+        elif ctype == "mtn":
+            settings["mtn_numbers"].append(text)
+        elif ctype == "sham":
+            settings["sham_accounts"].append(text)
+        save_data()
+        await update.message.reply_text("✅ تمت إضافة الرقم/الحساب بنجاح.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_REM_CODE_NUM":
+        ctype = context.user_data.get("code_type")
+        if ctype == "syr" and text in settings["syriatel_numbers"]:
+            settings["syriatel_numbers"].remove(text)
+        elif ctype == "mtn" and text in settings["mtn_numbers"]:
+            settings["mtn_numbers"].remove(text)
+        elif ctype == "sham" and text in settings["sham_accounts"]:
+            settings["sham_accounts"].remove(text)
+        save_data()
+        await update.message.reply_text("✅ تم إزالة الرقم/الحساب بنجاح.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_LUCK_VAL":
+        new_luck = [x.strip() for x in text.split(",") if x.strip()]
+        if not new_luck:
+            await update.message.reply_text("أدخل قيمة صحيحة مفصولة بفواصل:")
+            return
+        settings["luck_endings"] = new_luck
+        save_data()
+        await update.message.reply_text(f"✅ تم تحديث أرقام حظك والكاش بنجاح إلى: {', '.join(new_luck)}")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_USER_BAL_AMT":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل مبلغ صحيح:")
+            return
+        amt = int(text)
+        uid = context.user_data.get("target_user_id")
+        action = context.user_data.get("target_action")
+        if uid in users:
+            if action == "dep":
+                users[uid]["balance"] += amt
+                await update.message.reply_text(f"✅ تم شحن رصيد المستخدم `{uid}` بمبلغ {amt} بنجاح.")
+                try:
+                    await context.bot.send_message(chat_id=uid, text=f"✅ تمت إضافة مبلغ {amt} إلى رصيدك من قبل الإدارة.")
+                except Exception:
+                    pass
+            else:
+                users[uid]["balance"] -= amt
+                await update.message.reply_text(f"✅ تم خصم مبلغ {amt} من رصيد المستخدم `{uid}` بنجاح.")
+                try:
+                    await context.bot.send_message(chat_id=uid, text=f"⚠️ تم خصم مبلغ {amt} من رصيدك من قبل الإدارة.")
+                except Exception:
+                    pass
+            save_data()
+        else:
+            await update.message.reply_text("❌ المستخدم غير موجود.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_BONUS_VAL":
+        if not text.replace('.', '', 1).isdigit():
+            await update.message.reply_text("أدخل قيمة صحيحة:")
+            return
+        val = float(text) / 100.0
+        target = context.user_data.get("bonus_target")
+        target_name = context.user_data.get("bonus_target_name", "الطريقة المختارة")
+        current_val = settings["bonus_syriatel_mtn"] if target == "syr_mtn" else settings["bonus_sham"]
+        if target == "syr_mtn":
+            settings["bonus_syriatel_mtn"] = val
+        else:
+            settings["bonus_sham"] = val
+        save_data()
+        if val > current_val:
+            broadcast_text = f"انطلق ياملك 🤩🤩\nتم تعديل بونص الشحن عن طريق {target_name} ليصبح {text}%"
+            for uid in users.keys():
+                try:
+                    await context.bot.send_message(chat_id=uid, text=broadcast_text)
+                except Exception:
+                    pass
+        await update.message.reply_text(f"✅ تم تحديث نسبة البونص بنجاح إلى {text}%")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_MIN_WITH_VAL":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل رقم صحيح:")
+            return
+        val = int(text)
+        target = context.user_data.get("min_with_target")
+        settings["min_withdraw"][target] = val
+        save_data()
+        await update.message.reply_text(f"✅ تم تحديث الحد الأدنى للسحب بنجاح إلى: {val}")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_RATE":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل رقم صحيح:")
+            return
+        settings["dollar_rate"] = int(text)
+        save_data()
+        await update.message.reply_text(f"✅ تم تعديل سعر الدولار بنجاح إلى: {text}")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_OFFERS_TEXT":
+        settings["offers_text"] = text
+        save_data()
+        await update.message.reply_text("✅ تم تحديث نص رسالة العروض بنجاح.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_LOYALTY_TEXT":
+        settings["loyalty_info_text"] = text
+        save_data()
+        await update.message.reply_text("✅ تم تحديث نص رسالة نقاط الولاء بنجاح.")
+        context.user_data.clear()
+        return
+
+    elif state == "WAIT_ADMIN_GIVE_GIFT_UID":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل معرف صحيح باللغة الانكليزية:")
+            return
+        context.user_data["gift_uid"] = int(text)
+        context.user_data["state"] = "WAIT_ADMIN_GIVE_GIFT_AMT"
+        await update.message.reply_text("ادخل المبلغ المراد اهدائه:")
+        return
+
+    elif state == "WAIT_ADMIN_GIVE_GIFT_AMT":
+        if not text.isdigit():
+            await update.message.reply_text("أدخل مبلغ صحيح:")
+            return
+        amt = int(text)
+        uid = context.user_data.get("gift_uid")
+        if uid in users:
+            users[uid]["balance"] += amt
+            if uid not in gifts_history:
+                gifts_history[uid] = []
+            gifts_history[uid].append({"amount": amt, "date": str(datetime.datetime.now())[:19]})
+            save_data()
+            await update.message.reply_text(f"✅ تم منح الهدية للمستخدم بنجاح بمبلغ {amt}")
+            try:
+                await context.bot.send_message(chat_id=uid, text=f"- 🎉🤩 تم منحك كود هدية بقيمة {amt}\n- يرجى صرفه من القائمة.")
+            except Exception:
+                pass
+        else:
+            await update.message.reply_text("❌ المستخدم غير موجود في قاعدة بيانات البوت.")
+        context.user_data.clear()
+        return
+
+    if state == "WAIT_ECH_USER":
+        if not re.match(r'^[a-zA-Z]+$', text):
+            await update.message.reply_text("❌ اسم مستخدم غير صحيح (باللغة الإنجليزية فقط بدون أرقام أو مسافات)، أعد الإدخال:")
+            return
+        user_counter += 1
+        context.user_data["temp_ech_user"] = f"{text}{user_counter:04d}"
+        context.user_data["state"] = "WAIT_ECH_PASS"
+        save_data()
+        await update.message.reply_text("ادخل كلمة مرور (8 أرقام وأحرف باللغة الإنجليزية أو أكثر):")
+        return
+        
+    elif state == "WAIT_ECH_PASS":
+        if len(text) < 8 or not re.match(r'^[a-zA-Z0-9]+$', text):
+            await update.message.reply_text("❌ كلمة المرور غير صحيحة (8 خانات إنجليزية أو أكثر)، أعد الإدخال:")
+            return
+        ech_user = context.user_data.get("temp_ech_user")
+        request_counter += 1
+        req_id = request_counter
+        pending_requests[req_id] = {
+            "type": "create_echancy",
+            "user_id": user_id,
+            "ech_user": ech_user,
+            "ech_pass": text
+        }
+        context.user_data.clear()
+        save_data()
+        await update.message.reply_text("جاري معالجة طلبك الرجاء الانتظار")
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_ech_create_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"📌 **طلب إنشاء حساب ايشانسي #{req_id}**\n👤 المعرف: `{user_id}`\n👤 اسم المستخدم: `{ech_user}`\n🔑 كلمة المرور: `{text}`", reply_markup=admin_kb, parse_mode='Markdown')
+        return
+
+    elif state == "WAIT_ECH_CHARGE":
+        if not re.match(r'^\d+$', text):
+            await update.message.reply_text("❌ يجب إدخال مبلغ صحيح بدون فواصل:")
+            return
+        amt = int(text)
+        bal = users[user_id]["balance"]
+        if amt < 200 or amt > bal:
+            await update.message.reply_text("❌ المبلغ غير مناسب (الحد الأدنى 200 ولا يتجاوز رصيدك)، أعد الإدخال:")
+            return
+        
+        if user_id not in users:
+            users[user_id] = {}
+            
+        today_str = datetime.date.today().isoformat()
+        if users[user_id].get("last_deposit_date") != today_str:
+            users[user_id]["total_today_bot_deposit"] = 0
+            users[user_id]["today_echancy_deposit"] = 0
+            users[user_id]["last_deposit_date"] = today_str
+
+        users[user_id]["today_echancy_deposit"] = users[user_id].get("today_echancy_deposit", 0) + amt
+        users[user_id]["icash_deposited_today"] = True
+        
+        request_counter += 1
+        req_id = request_counter
+        pending_requests[req_id] = {
+            "type": "charge_echancy",
+            "user_id": user_id,
+            "ech_user": users[user_id]["ech_user"],
+            "amount": amt
+        }
+        context.user_data.clear()
+        save_data()
+        
+        await update.message.reply_text("جاري معالجة طلبك الرجاء الانتظار")
+        
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_ech_charge_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"📌 **طلب شحن حساب ايشانسي #{req_id}**\n👤 المعرف: `{user_id}`\n💰 المبلغ: {amt}", reply_markup=admin_kb, parse_mode='Markdown')
+        return
+
+    elif state == "WAIT_ECH_WITHDRAW":
+        if not re.match(r'^\d+$', text):
+            await update.message.reply_text("❌ أدخل مبلغاً صحيحاً:")
+            return
+        amt = int(text)
+        request_counter += 1
+        req_id = request_counter
+        pending_requests[req_id] = {
+            "type": "withdraw_echancy",
+            "user_id": user_id,
+            "ech_user": users[user_id]["ech_user"],
+            "amount": amt
+        }
+        context.user_data.clear()
+        save_data()
+        await update.message.reply_text("جاري معالجة طلبك يرجى الانتظار")
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_ech_with_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"📌 **طلب سحب من حساب ايشانسي #{req_id}**\n👤 المعرف: `{user_id}`\n💰 المبلغ: {amt}", reply_markup=admin_kb, parse_mode='Markdown')
+        return
+
+    elif state == "WAIT_DEP_AMT":
+        if not re.match(r'^\d+(\.\d+)?$', text):
+            await update.message.reply_text("❌ أدخل مبلغاً صحيحاً:")
+            return
+        amt = float(text)
+        method = context.user_data.get("dep_method", "")
+        if "USD" not in method and amt < 50:
+            await update.message.reply_text("❌ أقل قيمة للشحن هي 50، أعد الإدخال:")
+            return
+        context.user_data["dep_amt"] = amt
+        context.user_data["state"] = "WAIT_DEP_TX"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_deposit_bot')]])
+        if "شام" in method:
+            await update.message.reply_text("أدخل رقم العملية المكون من 8 أو 9 أرقام 👇", reply_markup=kb)
+        else:
+            await update.message.reply_text("أدخل رقم عملية الدفع 👇", reply_markup=kb)
+        return
+
+    elif state == "WAIT_DEP_TX":
+        tx_id = text
+        method = context.user_data.get("dep_method", "")
+        valid = (tx_id.isdigit() and len(tx_id) in [8, 9]) if "شام" in method else (tx_id.isdigit() and len(tx_id) == 12)
+        if not valid or tx_id in used_tx_ids:
+            await update.message.reply_text("❌ رقم العملية غير صحيح أو مستخدم مسبقاً، أعد الإدخال:")
+            return
+        amt = context.user_data.get("dep_amt")
+        if "USD" in method:
+            amt = amt * settings.get("dollar_rate", 13500)
+        request_counter += 1
+        req_id = request_counter
+        pending_requests[req_id] = {
+            "type": "deposit_bot",
+            "user_id": user_id,
+            "method": method,
+            "amount": amt,
+            "tx_id": tx_id
+        }
+        context.user_data.clear()
+        save_data()
+        await update.message.reply_text("جاري معالجة طلبك الرجاء الانتظار")
+        admin_kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+            [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+        ])
+        await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"📥 **طلب شحن رصيد بالبوت #{req_id}**\n👤 المعرف: `{user_id}`\n💳 الطريقة: {method}\n💰 المبلغ: {amt}\n🔢 رقم العملية: `{tx_id}`", reply_markup=admin_kb, parse_mode='Markdown')
+        return
+
+    elif state == "WAIT_WITH_PHONE":
+        if not (text.isdigit() and len(text) == 10):
+            await update.message.reply_text("❌ أدخل رقم هاتف صحيح مكون من 10 أرقام:")
+            return
+        context.user_data["with_phone"] = text
+        method = context.user_data.get("with_method")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_withdraw_bot')]])
+        if method in ["الهرم", "الفؤاد"]:
+            context.user_data["state"] = "WAIT_WITH_NAME"
+            await update.message.reply_text("ثانياً: أدخل الاسم الثلاثي للمستفيد 👇", reply_markup=kb)
+        else:
+            context.user_data["state"] = "WAIT_WITH_AMT"
+            await update.message.reply_text("ثانياً: أدخل مبلغ السحب 👇", reply_markup=kb)
+        return
+
+    elif state == "WAIT_WITH_NAME":
+        if len(text.split()) < 3:
+            await update.message.reply_text("❌ يجب إدخال الاسم الثلاثي الصحيح:")
+            return
+        context.user_data["with_name"] = text
+        context.user_data["state"] = "WAIT_WITH_AMT"
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_withdraw_bot')]])
+        await update.message.reply_text("ثالثاً : أدخل مبلغ السحب 👇", reply_markup=kb)
+        return
+
+    elif state == "WAIT_WITH_AMT":
+        if not re.match(r'^\d+$', text):
+            await update.message.reply_text("❌ أدخل مبلغاً صحيحاً:")
+            return
+        amt = int(text)
+        bal = users[user_id]["balance"]
+        min_amt = context.user_data.get("min_amt", 250)
+        method = context.user_data.get("with_method")
+        if amt < min_amt or amt > bal:
+            await update.message.reply_text(f"❌ المبلغ غير مناسب (أقل حد هو {min_amt} ولا يتجاوز رصيدك)، أعد الإدخال:")
+            return
+        context.user_data["with_amt"] = amt
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("رجوع", callback_data='btn_withdraw_bot')]])
+        if method == "شام كاش":
+            context.user_data["state"] = "WAIT_WITH_SHAM_ACC"
+            await update.message.reply_text("ثالثا: أدخل رقم حساب شام كاش الخاص بك 👇", reply_markup=kb)
+            return
+        else:
+            await finalize_withdraw_global(update, context, user_id)
+        return
+
+    elif state == "WAIT_WITH_SHAM_ACC":
+        if not re.match(r'^[a-zA-Z0-9]+$', text):
+            await update.message.reply_text("❌ يرجى إدخال رقم حساب شام كاش صحيح:")
+            return
+        context.user_data["with_sham_acc"] = text
+        await finalize_withdraw_global(update, context, user_id)
+        return
+
+    elif state == "WAIT_GIFT_CODE":
+        gift_codes_db = settings.get("gift_codes", {})
+        if text in gift_codes_db and not gift_codes_db[text]["used"]:
+            amt = gift_codes_db[text]["amount"]
+            gift_codes_db[text]["used"] = True
+            users[user_id]["balance"] += amt
+            if user_id not in gifts_history:
+                gifts_history[user_id] = []
+            gifts_history[user_id].append({"amount": amt, "date": str(datetime.datetime.now())[:19]})
+            context.user_data.clear()
+            save_data()
+            await update.message.reply_text(f"- تهانينا لقد تم اهداءك رصيد للبوت بقيمة {amt}")
+        else:
+            await update.message.reply_text("❌ الكود غير صالح أو تم استخدامه مسبقاً. أعد الإدخال:")
+        return
+
+async def finalize_withdraw_global(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    global request_counter
+    amt = context.user_data.get("with_amt")
+    method = context.user_data.get("with_method")
+    phone = context.user_data.get("with_phone")
+    name = context.user_data.get("with_name", "")
+    sham_acc = context.user_data.get("with_sham_acc", "")
+    net_amt = amt * 0.9  
+    request_counter += 1
+    req_id = request_counter
+    pending_requests[req_id] = {
+        "type": "withdraw_bot",
+        "user_id": user_id,
+        "method": method,
+        "amount": amt,
+        "net_amount": net_amt,
+        "phone": phone,
+        "name": name,
+        "sham_acc": sham_acc
+    }
+    context.user_data.clear()
+    save_data()
+    destination = sham_acc if sham_acc else phone
+    user_text = (
+        f"- مبلغ السحب : {amt}\n"
+        f"- المبلغ بعد الاقتطاع : {net_amt}\n"
+        + (f"-الاسم الثلاثي : {name}\n" if name else "") +
+        f"- رقم الهاتف/الحساب : {destination}\n"
+        f"- حالة الطلب : قيد المعالجة."
+    )
+    await update.message.reply_text(user_text)
+    admin_kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("موافقة ✅", callback_data=f"app_dep_{req_id}"), InlineKeyboardButton("رفض ❌", callback_data=f"rej_{req_id}")],
+        [InlineKeyboardButton("رد برسالة ✍️", callback_data=f"reply_user_{req_id}_{user_id}")]
+    ])
+    await context.bot.send_message(chat_id=SUPER_ADMIN_ID, text=f"📤 **طلب سحب رصيد من البوت #{req_id}**\n👤 المعرف: `{user_id}`\n💳 الطريقة: {method}\n💰 المبلغ: {amt} (صافي: {net_amt})\n📞 الوجهة: `{destination}`", reply_markup=admin_kb, parse_mode='Markdown')
+
+async def admin_callbacks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data.startswith("reply_user_"):
+        parts = data.split("_")
+        target_user_id = int(parts[3])
+        context.user_data["admin_replying_to_user"] = target_user_id
+        await query.message.reply_text("✍️ أرسل الآن نص الرد الذي تريد إرساله للمستخدم:")
+        return
+
+    if data.startswith("app_") or data.startswith("rej_"):
+        parts = data.split("_")
+        action = parts[0]
+        req_id = int(parts[-1])
+        if req_id in pending_requests:
+            req = pending_requests.pop(req_id)
+            user_id = req["user_id"]
+            if action == "app":
+                if req["type"] == "deposit_bot":
+                    amt = req["amount"]
+                    method = req["method"]
+                    bonus_rate = settings["bonus_sham"] if "شام" in method else settings["bonus_syriatel_mtn"]
+                    
+                    welcome_bonus_text = ""
+                    if settings.get("welcome_bonus_enabled", True) and not users[user_id].get("first_deposit_done", False):
+                        wb_rate = settings.get("welcome_bonus_rate", 0.20)
+                        bonus_rate += wb_rate
+                        users[user_id]["first_deposit_done"] = True
+                        welcome_bonus_text = f"\n🎉 مبروك! حصلت على البونص الترحيبي لأول شحن بنسبة {int(wb_rate*100)}%"
+
+                    bonus = amt * bonus_rate
+                    total_credited = amt + bonus
+                    users[user_id]["balance"] += total_credited
+                    
+                    today_str = datetime.date.today().isoformat()
+                    if users[user_id].get("last_deposit_date") != today_str:
+                        users[user_id]["total_today_bot_deposit"] = 0
+                        users[user_id]["today_echancy_deposit"] = 0
+                        users[user_id]["last_deposit_date"] = today_str
+                    users[user_id]["total_today_bot_deposit"] = users[user_id].get("total_today_bot_deposit", 0) + amt
+                    users[user_id]["today_deposit"] = users[user_id]["total_today_bot_deposit"]
+
+                    loyalty_add = int(amt // 50)
+                    users[user_id]["loyalty_points"] = users[user_id].get("loyalty_points", 0) + loyalty_add
+                    if user_id not in deposit_history:
+                        deposit_history[user_id] = []
+                    deposit_history[user_id].append({"amount": amt, "method": method, "date": str(datetime.datetime.now())[:19]})
+                    used_tx_ids.add(req["tx_id"])
+                    
+                    tx_str = str(req["tx_id"])
+                    luck_list = tuple(settings.get("luck_endings", ["11", "22", "33"]))
+                    luck_bonus_text = ""
+                    if tx_str.endswith(luck_list):
+                        gift_val = int(amt * 0.1)
+                        if gift_val < 50: gift_val = 50
+                        unique_code = f"LUCK-{req_id}-{tx_str[-2:]}"
+                        if "gift_codes" not in settings:
+                            settings["gift_codes"] = {}
+                        settings["gift_codes"][unique_code] = {"amount": gift_val, "used": False}
+                        if user_id not in gifts_history:
+                            gifts_history[user_id] = []
+                        gifts_history[user_id].append({"amount": gift_val, "date": str(datetime.datetime.now())[:19]})
+                        luck_bonus_text = f"\n\n🎁 مبروك! رقم عمليتك يحمل جائزة حظك والكاش!\n🔑 كود الهدية: `{unique_code}`"
+
+                    save_data()
+                    
+                    success_msg = (
+                        f"✅ نجاح\n\n"
+                        f"💰 رصيدك الحالي في البوت:\n"
+                        f"{users[user_id]['balance']:.2f} NSP \n\n"
+                        f"💰 تمت إضافة بونص إجمالي: {int(bonus_rate*100)}%\n"
+                        f"{welcome_bonus_text}\n"
+                        f"⭐️ حصلت على {loyalty_add} نقاط ولاء في البوت."
+                        f"{luck_bonus_text}"
+                    )
+                    await context.bot.send_message(chat_id=user_id, text=success_msg, parse_mode='Markdown')
+                elif req["type"] == "withdraw_bot":
+                    amt = req["amount"]
+                    users[user_id]["balance"] -= amt
+                    if user_id not in withdraw_history:
+                        withdraw_history[user_id] = []
+                    withdraw_history[user_id].append({"amount": amt, "net_amount": req["net_amount"], "method": req["method"], "date": str(datetime.datetime.now())[:19]})
+                    save_data()
+                    await context.bot.send_message(chat_id=user_id, text="-تم تنفيذ الطلب السحب بنجاح ✅")
+                elif req["type"] == "create_echancy":
+                    users[user_id]["ech_user"] = req["ech_user"]
+                    users[user_id]["ech_pass"] = req["ech_pass"]
+                    save_data()
+                    await context.bot.send_message(chat_id=user_id, text=f"🤩🤩 تم إنشاء الحساب بنجاح 🎉🎉\n- اسم المستخدم : {req['ech_user']}\n- كلمة المرور : {req['ech_pass']}")
+                elif req["type"] == "charge_echancy":
+                    amt = req["amount"]
+                    users[user_id]["balance"] -= amt
+                    save_data()
+                    await context.bot.send_message(chat_id=user_id, text="تم شحن حسابك بنجاح ✅")
+                elif req["type"] == "withdraw_echancy":
+                    amt = req["amount"]
+                    users[user_id]["balance"] += amt
+                    save_data()
+                    await context.bot.send_message(chat_id=user_id, text=f"تم السحب بنجاح رصيدك بالبوت هو {users[user_id]['balance']}")
+                elif req["type"] == "loyalty_exchange":
+                    pts_deducted = req["points"]
+                    reward_desc = req.get("reward_desc", "250")
+                    users[user_id]["loyalty_points"] -= pts_deducted
+                    if reward_desc == "250":
+                        users[user_id]["balance"] += 250
+                    save_data()
+                    await context.bot.send_message(chat_id=user_id, text=f"- تهانينا 🎉🎉🎉 لقد حصلت على جائزة تبديل نقاط الولاء: ({reward_desc})")
+                await query.message.edit_text("✅ تمت الموافقة على الطلب.")
+            else:
+                pending_requests.pop(req_id, None)
+                save_data()
+                await context.bot.send_message(chat_id=user_id, text="❌ عذراً، تم رفض طلبك من قبل الإدارة.")
+                await query.message.edit_text("❌ تم رفض الطلب.")
+
+def main():
+    load_data()
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(accept_terms_callback, pattern='^accept_terms$'))
+    app.add_handler(CallbackQueryHandler(main_menu_callback, pattern='^main_menu$'))
+    
+    app.add_handler(CallbackQueryHandler(wheel_menu, pattern='^wheel_menu$'))
+    app.add_handler(CallbackQueryHandler(admin_grant_wheel_menu, pattern='^admin_grant_wheel$'))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
+    
+    app.add_handler(CallbackQueryHandler(adm_cashback_menu, pattern='^adm_cashback_menu$'))
+    app.add_handler(CallbackQueryHandler(adm_cashback_action, pattern='^(cb_on|cb_off|cb_edit_vals)$'))
+    app.add_handler(CallbackQueryHandler(adm_welcome_bonus_menu, pattern='^adm_welcome_bonus_menu$'))
+    app.add_handler(CallbackQueryHandler(adm_welcome_bonus_action, pattern='^(wb_on|wb_off|wb_edit_val)$'))
+
+    app.add_handler(CallbackQueryHandler(echancy_handler, pattern='^btn_echancy$'))
+    app.add_handler(CallbackQueryHandler(ech_id_show, pattern='^ech_id$'))
+    app.add_handler(CallbackQueryHandler(ech_my_account_show, pattern='^ech_my_account$'))
+    app.add_handler(CallbackQueryHandler(ech_create_start, pattern='^ech_create$'))
+    app.add_handler(CallbackQueryHandler(ech_charge_start, pattern='^ech_charge$'))
+    app.add_handler(CallbackQueryHandler(ech_withdraw_start, pattern='^ech_withdraw$'))
+    
+    app.add_handler(CallbackQueryHandler(deposit_bot_menu, pattern='^btn_deposit_bot$'))
+    app.add_handler(CallbackQueryHandler(dep_syriatel_mtn_start, pattern='^(dep_syriatel|dep_mtn)$'))
+    app.add_handler(CallbackQueryHandler(dep_sham_start, pattern='^dep_sham$'))
+    app.add_handler(CallbackQueryHandler(dep_sham_currency_select, pattern='^dep_sham_(syp|usd)$'))
+    
+    app.add_handler(CallbackQueryHandler(withdraw_bot_menu, pattern='^btn_withdraw_bot$'))
+    app.add_handler(CallbackQueryHandler(withdraw_method_select, pattern='^with_(syriatel|mtn|sham|haram|fouad)$'))
+    
+    app.add_handler(CallbackQueryHandler(balance_handler, pattern='^btn_balance$'))
+    app.add_handler(CallbackQueryHandler(referrals_handler, pattern='^btn_referrals$'))
+    app.add_handler(CallbackQueryHandler(referrals_query_handler, pattern='^ref_query$'))
+    
+    app.add_handler(CallbackQueryHandler(gift_code_menu, pattern='^btn_gift_code$'))
+    app.add_handler(CallbackQueryHandler(history_menu, pattern='^btn_history$'))
+    app.add_handler(CallbackQueryHandler(history_deposit_show, pattern='^hist_deposit$'))
+    app.add_handler(CallbackQueryHandler(history_withdraw_show, pattern='^hist_withdraw$'))
+    app.add_handler(CallbackQueryHandler(history_gifts_show, pattern='^hist_gifts$'))
+    
+    app.add_handler(CallbackQueryHandler(loyalty_menu, pattern='^btn_loyalty$'))
+    app.add_handler(CallbackQueryHandler(loyalty_exchange_info, pattern='^loyalty_exchange_info$'))
+    app.add_handler(CallbackQueryHandler(loyalty_do_exchange, pattern='^loyalty_do_exchange$'))
+    
+    app.add_handler(CallbackQueryHandler(offers_handler, pattern='^btn_offers$'))
+    app.add_handler(CallbackQueryHandler(terms_handler, pattern='^btn_terms$'))
+    
+    app.add_handler(CallbackQueryHandler(admin_panel, pattern='^btn_admin_panel$'))
+    app.add_handler(CallbackQueryHandler(adm_maintenance_menu, pattern='^adm_maintenance_menu$'))
+    app.add_handler(CallbackQueryHandler(adm_maint_action, pattern='^adm_maint_(off|on)$'))
+    app.add_handler(CallbackQueryHandler(adm_broadcast_menu, pattern='^adm_broadcast_menu$'))
+    app.add_handler(CallbackQueryHandler(broadcast_single_list, pattern='^broadcast_single$'))
+    app.add_handler(CallbackQueryHandler(broadcast_all_start, pattern='^broadcast_all$'))
+    app.add_handler(CallbackQueryHandler(adm_req_ech_create, pattern='^adm_req_ech_create$'))
+    app.add_handler(CallbackQueryHandler(adm_req_bot_money, pattern='^adm_req_bot_money$'))
+    app.add_handler(CallbackQueryHandler(adm_req_loyalty, pattern='^adm_req_loyalty$'))
+    app.add_handler(CallbackQueryHandler(adm_req_ech_money, pattern='^adm_req_ech_money$'))
+    app.add_handler(CallbackQueryHandler(adm_manage_admin_start, pattern='^adm_manage_admin$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_codes_menu, pattern='^adm_edit_codes$'))
+    app.add_handler(CallbackQueryHandler(adm_add_code_start, pattern='code_(syr|mtn|sham)'))
+    app.add_handler(CallbackQueryHandler(do_add_code_prompt, pattern='^do_add_code$'))
+    app.add_handler(CallbackQueryHandler(do_rem_code_prompt, pattern='^do_rem_code$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_luck_prompt, pattern='^adm_edit_luck$'))
+    app.add_handler(CallbackQueryHandler(adm_users_list, pattern='^adm_users_list$'))
+    app.add_handler(CallbackQueryHandler(adm_user_balance_action, pattern='^adm_user_(dep|with)_'))
+    app.add_handler(CallbackQueryHandler(adm_transactions, pattern='^adm_transactions$'))
+    app.add_handler(CallbackQueryHandler(adm_transactions_show, pattern='^adm_trans_(dep|with)$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_bonus_menu, pattern='^adm_edit_bonus$'))
+    app.add_handler(CallbackQueryHandler(adm_bonus_prompt, pattern='^bonus_(syr_mtn|sham)$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_min_with_menu, pattern='^adm_edit_min_with$'))
+    app.add_handler(CallbackQueryHandler(adm_min_with_prompt, pattern='^min_(cash|sham|haram|fouad)$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_rate, pattern='^adm_edit_rate$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_offers_start, pattern='^adm_edit_offers$'))
+    app.add_handler(CallbackQueryHandler(adm_edit_loyalty_start, pattern='^adm_edit_loyalty$'))
+    app.add_handler(CallbackQueryHandler(adm_give_gift_start, pattern='^adm_give_gift$'))
+    app.add_handler(CallbackQueryHandler(admin_callbacks, pattern='^(app|rej|reply_user)_'))
+
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_message_handler))
+
+    print("Bot is running...")
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
